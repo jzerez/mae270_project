@@ -17,16 +17,23 @@ def euler_angle_to_rotation_matrix(angle: csdl.Variable):
     rz = rotate_z(angle[2])
 
     # Compute total rotation
-    r_total = csdl.matmat(rz, csdl.matmat(ry, rx))
+    mat = csdl.matmat(rz, csdl.matmat(ry, rx))
     
-    return r_total
+    return mat
 
-def rotation_matrix_to_euler_angle(rotation):
+def rotation_matrix_to_euler_angle(mat: csdl.Variable):
+    """Compute euler angles from a 3x3 rotation matrix 
+    Applies using the ZYX rotation order
+
+    Args:
+        mat (csdl.Variable): vector of roll, pitch, yaw [rad]
+
+    Returns:
+        _type_: _description_
+    """
     # 1. Extract the Pitch (theta)
     # R[2, 0] corresponds to -sin(theta) in the ZYX matrix
-    # We clip the value to avoid NaNs from floating point noise outside [-1, 1]
-    r20 = rotation[2, 0]
-    pitch = -csdl.arcsin(r20)
+    pitch = -csdl.arcsin(mat[2, 0])
 
     # 2. Extract Roll (phi) and Yaw (psi) using atan2
     # Standard ZYX mapping:
@@ -35,8 +42,8 @@ def rotation_matrix_to_euler_angle(rotation):
     # R[1, 0] = sin(psi)cos(theta)
     # R[0, 0] = cos(psi)cos(theta)
     
-    roll = csdl.arctan(rotation[2, 1] / rotation[2, 2])
-    yaw = csdl.arctan(rotation[1, 0] / rotation[0, 0])
+    roll = csdl.arctan(mat[2, 1] / mat[2, 2])
+    yaw = csdl.arctan(mat[1, 0] / mat[0, 0])
 
     angle = csdl.Variable(shape=(3,), value=0)
     angle = angle.set(csdl.slice[0], roll)
@@ -97,6 +104,22 @@ def rotate_z(angle: csdl.Variable):
     return rz
 
 def invert_transform(transform: csdl.Variable):
+    """Calculates the inverse of a 4x4 Homogenous transform
+
+    Given a transform with rotation R and translation p:
+    T = [R, p;
+         0, 1]
+
+    Its inverse is given by:
+    T^-1 = [R^T, -R^T * p;
+              0,         1]
+
+    Args:
+        transform (csdl.Variable): (4, 4) transform
+
+    Returns:
+        t_inv (csdl.Variable) (4, 4) inverse transform
+    """
     t_inv = csdl.Variable(shape=(4, 4), value=np.identity(4))
 
     r_inv = csdl.transpose(transform[:3, :3])
@@ -107,7 +130,20 @@ def invert_transform(transform: csdl.Variable):
 
     return t_inv
 
-def rotation_exp(omega, theta):
+def rotation_exp(omega: csdl.Variable, theta: csdl.Variable):
+    """Computes the matrix exponential for rotation
+    Given an angular displacement (theta) about an axis (omega), calculate
+    the equivalent rotation matrix
+
+    Uses Rodriguez's Formula 
+
+    Args:
+        omega (csdl.Variable): (3,) vector representing rotation axis
+        theta (csdl.Variable): (1,) angular displacement [rad]
+
+    Returns:
+        rotation (csdl.Variable): (3, 3) equivalent rotation matrix
+    """
     omega_ss = vec_to_skew_symmetric(omega)
     rotation = csdl.Variable(value=np.identity(3))
     rotation += csdl.sin(theta) * omega_ss
@@ -115,19 +151,39 @@ def rotation_exp(omega, theta):
 
     return rotation
 
-def transform_exp(screw, theta):
+def transform_exp(screw: csdl.Variable, theta: csdl.Variable):
+    """Computes the matrix exponential for homogeneous transforms
+
+    Given an angular displacement (theta) about a screw axis (screw),
+    Calculate the equivalent homogenous transformation matrix
+
+    Args:
+        screw (csdl.Variable): (6,) vector representing screw axis. 
+        theta (csdl.Variable): (1,) angular displacement [rad]
+
+    Returns:
+        transform (csdl.Variable): (4, 4) equivalent homogenous transformation matrix 
+    """
+    # Extract the angular and linear components of the screw axis
     omega = screw[:3]
     v = screw[3:]
 
+    # Skew symetric form of rotation axis
     omega_ss = vec_to_skew_symmetric(omega)
 
+    # Calculate equivalent rotation matrix
     r = rotation_exp(omega, theta)
+
+    # k is a temp variable to calculate equivalent displacement vector p
+    # Modified Rodriguez's formula
     k = csdl.Variable(value=np.identity(3)) * theta
     k += (1 - csdl.cos(theta)) * omega_ss
     k += (theta - csdl.sin(theta)) * csdl.matmat(omega_ss, omega_ss)
 
+    # Equivalent displacement vector p
     p = csdl.matvec(k, v)
 
+    # Load results into transform variable
     transform = csdl.Variable(value=np.identity(4))
 
     transform = transform.set(csdl.slice[:3, :3], r)
@@ -135,14 +191,33 @@ def transform_exp(screw, theta):
 
     return transform
 
-def rotation_log(rotation):
+def rotation_log(rotation: csdl.Variable):
+    """Computes the matrix logarithm for a rotation matrix
+
+    Given a rotation matrix, calculate an axis and angular displacement 
+    that results in equivalent rotation. 
+
+    NOTE: This function uses if-statements, which do not allow for 
+    gradient propogation. 
+
+    Args:
+        rotation (csdl.Variable): (3, 3) Rotation matrix
+
+    Returns:
+        omega (csdl.Variable): (3,) unit axis of rotation
+        theta (csdl.Variable): (1,) angular displacement [rad] 
+    """
+    # Check edge case, where R is the identity matrix
+    # If so, theta is zero and omega vector is also zero
     if trace(rotation).value == 3:
         theta = csdl.Variable(shape=(1,), value=0)
         omega = csdl.Variable(shape=(3,), value=0)
         return omega, theta
-    # elif trace(rotation) == -1:
-    #     theta = csdl.Variable(shape=(1,), value=0)
-    #     omega = 
+
+    # General case
+    # NOTE! 
+    # Currently, this implementation will fail if theta is exactly 
+    # equal to an integer multiple of pi. In future will need more logic to detect
     theta = csdl.arccos(0.5*(trace(rotation)-1))
     omega_ss = 1 / (2 * csdl.sin(theta)) * (rotation - csdl.transpose(rotation))
     omega = skew_symmetric_to_vec(omega_ss)
@@ -302,6 +377,87 @@ def rotation_matrix_to_quat(mat):
     quat = quat.set(csdl.slice[3], z)
 
     return quat
+
+def forward_kinematics(frames: csdl.Variable, thetas: csdl.Variable):
+    """Computes robot's end-effector pose given joint angles.
+    Based on a robot's set of transforms for each joint
+
+    Args:
+        frames (csdl.Variable): (4, 4, n) set of transforms expressing each joint's pose relative
+            to its parent joint. Z-axis is rotational axis 
+        thetas (csdl.Variable): (n, ) vector of joitn angles [rad]
+
+    Returns:
+        total_transform (csdl.Variable): (4, 4) transform for the end-effector in the fixed/world frame
+    """
+    n = thetas.size
+    total_transform = csdl.Variable(value=np.identity(4), name='total_transform')
+    ee_frame = csdl.Variable(value=np.identity(4))
+
+    # Update transform for each joint
+    for i in csdl.frange(1, n):
+        theta = thetas[i-1]
+        frame = frames.get(csdl.slice[:, :, i])
+        joint_rotation = rotate_z(theta)
+        joint_transform = csdl.Variable(value=np.identity(4))
+        joint_transform = joint_transform.set(csdl.slice[:3, :3], joint_rotation)
+        total_transform = csdl.matmat(total_transform, csdl.matmat(joint_transform, frame))
+    
+    # Update transform for the last joint 
+    joint_rotation = rotate_z(thetas[-1])
+    joint_transform = csdl.Variable(value=np.identity(4))
+    joint_transform = joint_transform.set(csdl.slice[:3, :3], joint_rotation)
+    total_transform = csdl.matmat(total_transform, csdl.matmat(joint_rotation, ee_frame))
+    
+    return total_transform
+
+def forward_kinematics_screw(screws: csdl.Variable, thetas: csdl.Variable, ee_frame: csdl.Variable):
+    """Computes robot's end-effector pose given joint angles. 
+    Based on robot's screw axes when it is in the zero pose
+
+    Args:
+        screws (csdl.Variable): (6, n) screw axes
+        thetas (csdl.Variable): (n,) joint angles [rad]
+        ee_frame (csdl.Variable): (4, 4) transform for the end-effector relative to the world-frame
+            when the robot is in the zero pose
+
+    Returns:
+        total_transform (csdl.Variable): (4, 4) transformation matrix of end-effector pose 
+            in the fixed/world frame given joint angles 
+    """
+    n = thetas.size
+    total_transform = csdl.Variable(value=np.identity(4), name='total_transform')
+
+    for i in csdl.frange(n):
+        theta = thetas[i]
+        screw = screws.get(csdl.slice[:, i])
+        total_transform = csdl.matmat(total_transform, transform_exp(screw, theta))
+
+    total_transform = csdl.matmat(total_transform, ee_frame)
+    return total_transform
+
+def calc_twist_err(transform: csdl.Variable, goal_transform: csdl.Variable):
+    """Calculates the error between the current end effector pose and the goal.
+    Returns a 6D twist vector. 
+
+    Args:
+        transform (csdl.Variable): (4, 4) Transform for current end-effector pose
+        goal_transform (csdl.Variable): (4, 4) goal transform for end-effector
+
+    Returns:
+        err (csdl.Variable): (6,) Twist vector expressed in base/static frame
+    """
+    # Goal transform expressed in end-effector frame
+    Tbd = csdl.matmat(invert_transform(transform), goal_transform)
+
+    # Compute matrix log to obtain screw aixs
+    screw_axis, theta = transform_log(Tbd)
+    
+    # scale the unit screw axis to get twist (in end-effector frame)
+    twist = screw_axis * theta
+
+    # Project twist back into the base/static frame
+    return csdl.matvec(adjoint(transform), twist)
 
 if __name__ == "__main__":
     import numpy as np
