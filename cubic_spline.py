@@ -168,52 +168,52 @@ def fit_cubic_spline_2(s, y):
         
     return coeffs
 
+if __name__ == "__main__":
+    # --- Example Usage ---
+    # 4 waypoints, 3 joints
+    way_pts = np.array([
+        [0.0, 0.0, 0.25],
+        [0.5, 1.5, 0.0],
+        [1.2, 0.5, 3.0],
+        [1.0, 2.0, 2.0],
+        [2.0, 0.0, 2.0],
+        [2.0, 0.25, 1.5]
+    ])
+    s_pts = np.linspace(0, 1, way_pts.shape[0]) # Normalize path 0 to 1
+    coeffs = fit_cubic_spline_2(s_pts, way_pts) 
 
-# --- Example Usage ---
-# 4 waypoints, 3 joints
-way_pts = np.array([
-    [0.0, 0.0, 0.25],
-    [0.5, 1.5, 0.0],
-    [1.2, 0.5, 3.0],
-    [1.0, 2.0, 2.0],
-    [2.0, 0.0, 2.0],
-    [2.0, 0.25, 1.5]
-])
-s_pts = np.linspace(0, 1, way_pts.shape[0]) # Normalize path 0 to 1
-coeffs = fit_cubic_spline_2(s_pts, way_pts) 
+    recorder = csdl.Recorder(inline=True)
+    recorder.start()
+    way_pts = csdl.Variable(value=way_pts.T)
+    s_pts = csdl.Variable(value=s_pts)
+    spline_fit = fit_cubic_spline(s_pts, way_pts)
+    s_fine, path_points = discretize_spline(s_pts, way_pts, spline_fit)
 
-recorder = csdl.Recorder(inline=True)
-recorder.start()
-way_pts = csdl.Variable(value=way_pts.T)
-s_pts = csdl.Variable(value=s_pts)
-spline_fit = fit_cubic_spline(s_pts, way_pts)
-s_fine, path_points = discretize_spline(s_pts, way_pts, spline_fit)
+    recorder.stop()
 
-recorder.stop()
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.plot(s_pts.value, way_pts.value[0, :], 'C0o', label='J0')
+    plt.plot(s_pts.value, way_pts.value[1, :], 'C1o', label='J1')
+    plt.plot(s_pts.value, way_pts.value[2, :], 'C2o', label='J2')
 
-import matplotlib.pyplot as plt
-plt.figure()
-plt.plot(s_pts.value, way_pts.value[0, :], 'C0o', label='J0')
-plt.plot(s_pts.value, way_pts.value[1, :], 'C1o', label='J1')
-plt.plot(s_pts.value, way_pts.value[2, :], 'C2o', label='J2')
+    plt.plot(s_fine.value, path_points.value[0, :], 'C0--', label='J0')
+    plt.plot(s_fine.value, path_points.value[1, :], 'C1--', label='J1')
+    plt.plot(s_fine.value, path_points.value[2, :], 'C2--', label='J2')
+    plt.title('CSDL Path Generation')
+    plt.legend()
 
-plt.plot(s_fine.value, path_points.value[0, :], 'C0--', label='J0')
-plt.plot(s_fine.value, path_points.value[1, :], 'C1--', label='J1')
-plt.plot(s_fine.value, path_points.value[2, :], 'C2--', label='J2')
-plt.title('CSDL Path Generation')
-plt.legend()
+    plt.figure()
+    s_fine = np.linspace(0, 1, 100)
+    path_points2 = np.array([evaluate_spline(s, s_pts.value, coeffs) for s in s_fine])
+    plt.plot(s_pts.value, way_pts.value[0, :], 'C0o', label='J0')
+    plt.plot(s_pts.value, way_pts.value[1, :], 'C1o', label='J1')
+    plt.plot(s_pts.value, way_pts.value[2, :], 'C2o', label='J2')
 
-plt.figure()
-s_fine = np.linspace(0, 1, 100)
-path_points2 = np.array([evaluate_spline(s, s_pts.value, coeffs) for s in s_fine])
-plt.plot(s_pts.value, way_pts.value[0, :], 'C0o', label='J0')
-plt.plot(s_pts.value, way_pts.value[1, :], 'C1o', label='J1')
-plt.plot(s_pts.value, way_pts.value[2, :], 'C2o', label='J2')
+    plt.plot(s_fine, path_points2.T[0, :], 'C0--', label='J0')
 
-plt.plot(s_fine, path_points2.T[0, :], 'C0--', label='J0')
+    plt.plot(s_fine, path_points2.T[1, :], 'C1--', label='J1')
 
-plt.plot(s_fine, path_points2.T[1, :], 'C1--', label='J1')
-
-plt.plot(s_fine, path_points2.T[2, :], 'C2--', label='J2')
-plt.title('Default Path Generation')
-plt.show()
+    plt.plot(s_fine, path_points2.T[2, :], 'C2--', label='J2')
+    plt.title('Default Path Generation')
+    plt.show()

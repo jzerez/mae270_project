@@ -26,7 +26,10 @@
         - Inertia calculator
     - motor internal inertia modeling 
 
-
+## Next Steps
+- Should test robot reachability optimization sample problem:
+    - Input Variables: xyz, rpy for J2 and J3
+    - Output: Magnitude of total error (norm of 6 vector).
 
 ## Open Questions
 - What is better: specifying relative joint transforms or global ones? 

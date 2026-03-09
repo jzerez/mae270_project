@@ -81,7 +81,7 @@ class Robot:
         pass
 
     def calc_screw_axis(self, joint_pos, joint_ang):
-        v = cs.cross(-omega, q)
+        # v = cs.cross(-omega, q)
         pass
 
     def jacobian(self, theta):

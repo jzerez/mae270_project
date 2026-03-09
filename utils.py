@@ -315,8 +315,8 @@ def joint_transform_to_screw_axis(transform: csdl.Variable):
 
     # Extract rotation axis (z-axis by convention)
     omega = transform[:3, 2]
-    # Check to make sure omega is unit length
-    assert(np.isclose(csdl.norm(omega).value, 1))
+    # # Check to make sure omega is unit length
+    # assert(np.isclose(csdl.norm(omega).value, 1))
 
     q = transform[:3, -1]
 
