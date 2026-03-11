@@ -459,6 +459,34 @@ def calc_twist_err(transform: csdl.Variable, goal_transform: csdl.Variable):
     # Project twist back into the base/static frame
     return csdl.matvec(adjoint(transform), twist)
 
+def lie_bracket(twist: csdl.Variable):
+    """Calculate the 6x6 matrix representing the Lie-Bracket of the given 6-vector
+        The Lie Bracket is a generalization of the cross-product between two 6-vectors
+
+        For a given twist, V = [w, v]
+
+        The lie-bracket will return:
+        [[w], 0,
+         [v], [w]]
+
+        Where [w] and [v] are the skew symmetric forms of omega and v. 
+
+    Args:
+        twist (csdl.Variable): (6,) Spatial twist vector
+
+    Returns:
+        ad (csdl.Variable): (6,6) Lie Bracket of the vector
+    """
+    w_ss = vec_to_skew_symmetric(twist[:3])
+    v_ss = vec_to_skew_symmetric(twist[3:])
+    ad = csdl.Variable(shape=(6,6), value=0)
+
+    ad = ad.set(csdl.slice[:3, :3], w_ss)
+    ad = ad.set(csdl.slice[3:, :3], v_ss)
+    ad = ad.set(csdl.slice[3:, 3:], w_ss)
+    
+    return ad
+
 if __name__ == "__main__":
     import numpy as np
     import csdl_alpha as csdl
