@@ -146,3 +146,9 @@ else:
     # Print results of optimization
     optimizer.print_results(optimal_variables=True)
     # print(optimizer.results)
+
+    print('j1_ang:', j1_ang.value)
+    print('j2_pos:', j2_pos.value)
+    print('j2_ang:', j2_ang.value)
+    print('j3_pos:', j3_pos.value)
+    print('j3_ang:', j3_ang.value)
