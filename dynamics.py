@@ -20,8 +20,8 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav=csd
         grav (csdl.Variable, optional): (3,) Vector representing gravity
             Defaults to csdl.Variable(value=np.array([0, 0, -9.81])).
     """
-    n_joints = 3
-    n_links = 3
+    n_joints = q.shape[0]
+    n_links = q.shape[0]
 
     link_configs = csdl.Variable(shape=(n_links, 4, 4), value=0)
     link_vels = csdl.Variable(shape=(n_links, 6), value=0)
@@ -76,6 +76,33 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav=csd
     
     return torques
 
+def forward_dynamics(q, qdot, tau, link_frames, screw_axes, inertias, grav=csdl.Variable(value=np.array([0, 0, -9.81]))):
+    n_joints = q.shape[0]
+
+    # init mass matrix
+    mass_mat = csdl.Variable(shape=(n_joints, n_joints))
+
+    # init working variables 
+    qddot = csdl.Variable(shape=qdot.shape, value=0)
+    zero_twist = csdl.Variable(shape=qdot.shape, value=0)
+
+    # Calculate coriolis forces/torques h(q, qdot)
+    h = inverse_dynamics(q, qdot, zero_twist, link_frames, screw_axes, inertias, grav)
+
+    # Find mass matrix
+    for i in range(n_joints):
+        # Select i-th element to be non-zero
+        qddot = qddot.set(csdl.slice[i], 1)
+        # Calculate i-th column of mass-matrix
+        mi = inverse_dynamics(q, zero_twist, qddot, link_frames, screw_axes, inertias, grav)
+        mass_mat = mass_mat.set(csdl.slice[:, i], mi)
+
+        # reset qddot for next iter
+        qddot = qddot.set(csdl.slice[i], 0)
+
+    # Solve linear system for total/real qddot
+    qddot = csdl.solve_linear(mass_mat, tau - h)
+    return qddot
 
 if __name__ == "__main__":
     # test code here
