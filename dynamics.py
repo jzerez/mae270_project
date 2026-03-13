@@ -4,7 +4,7 @@ import modern_robotics as mr
 import utils
 
 # Inverse Dynamics: Given q, qdot, qddot; find torque
-def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav=csdl.Variable(value=np.array([0, 0, -9.81]))):
+def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav):
     """Calculate the torque required for a given joint-space pos/vel/acc
     
     Args:
@@ -14,34 +14,45 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav=csd
         link_frames (csdl.Variable): (n, 4, 4) Tensor of link frames. Each frame
             is defined at the link's center of mass and is defined relative to 
             the frame of the downstream link (away from the robot base)
-        screw_axes (csdl.Variable): (6, n) Screw axes for each joint when 
+        screw_axes (csdl.Variable): (n, 6) Screw axes for each joint when 
             the robot is in the home position. relative to the world frame
         inertias (csdl.Variable): (n, 6, 6) Tensor of link inertias
-        grav (csdl.Variable, optional): (3,) Vector representing gravity
-            Defaults to csdl.Variable(value=np.array([0, 0, -9.81])).
+        grav (csdl.Variable): (3,) Vector representing gravity
     """
     n_joints = q.shape[0]
     n_links = q.shape[0]
 
-    link_configs = csdl.Variable(shape=(n_links, 4, 4), value=0)
-    link_vels = csdl.Variable(shape=(n_links, 6), value=0)
-    link_accels = csdl.Variable(shape=(n_links, 6), value=0)
+    link_configs = csdl.Variable(shape=(n_links+1, 4, 4), value=0)
+    link_vels = csdl.Variable(shape=(n_links+1, 6), value=0)
+    link_accels = csdl.Variable(shape=(n_links+1, 6), value=0)
     torques = csdl.Variable(shape=(n_joints,), value=0)
 
-    # Transform Screw Axes to link frames. (n, 6) to match other vars
-    axes = csdl.Variable(shape=csdl.transpose(screw_axes).shape, value=0)
-
-    for i in range(n_links):
-        axes[i, :] = csdl.matmat(utils.adjoint(link_frames[i, :, :]), screw_axes[:, i])
-    
-    
     Vi_prev = csdl.Variable(shape=(6,), value=0)
     Vi_dot_prev = csdl.Variable(shape=(6,), value=0)
     F_upstream = csdl.Variable(shape=(6,), value=0)
 
-    for i in range(n_links):
+    # Set gravity
+    for i in csdl.frange(3):
+        link_accels = link_accels.set(csdl.slice[0, i+3], -grav[i])
+        Vi_dot_prev = Vi_dot_prev.set(csdl.slice[i+3], -grav[i])
+
+    # Transform Screw Axes to link frames. (n, 6) to match other vars
+    axes = csdl.Variable(shape=screw_axes.shape, value=0)
+
+    Mi_total = csdl.Variable(value=np.identity(4))
+
+    for i in csdl.frange(n_links):
+        Mi_total = csdl.matmat(Mi_total, link_frames[i, :, :])
+
+        new_axis = csdl.matmat(utils.adjoint(utils.invert_transform(Mi_total)), screw_axes[i, :])
+        axes = axes.set(csdl.slice[i, :], new_axis)
+    
+    
+
+    for i in csdl.frange(n_links):
         # Transform of link i, expressed in link i-1's frame
-        Ti = csdl.matmat(utils.transform_exp(axes[i, :], -q[i]), link_frames[i, :, :])
+        Ti = csdl.matmat(utils.transform_exp(axes[i, :], -q[i]), utils.invert_transform(link_frames[i, :, :]))
+
 
         # Twist/Velocity of link i, expressed in link i's frame
         # First term is the velocity due to the upstream joint's motion
@@ -52,31 +63,39 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav=csd
         # Spatial Accel of link i
         # First term is accel due to upstream joint
         # Second term is accel due to joint i's rotation
-        # Third term is accel due to corriolis forces 
+        # Third term is accel due to coriolis forces 
         Vi_dot  = csdl.matmat(utils.adjoint(Ti), Vi_dot_prev) \
             + axes[i, :] * qddot[i] \
             + qdot[i] * csdl.matmat(utils.lie_bracket(Vi), axes[i, :])
         Vi_dot_prev = Vi_dot
         
-        link_configs[i] = Ti
-        link_vels[i] = Vi
-        link_accels[i] = Vi_dot
+        link_configs = link_configs.set(csdl.slice[i], Ti)
+        link_vels = link_vels.set(csdl.slice[i+1], Vi)
+        link_accels = link_accels.set(csdl.slice[i+1], Vi_dot)
 
-    for i in range(n_joints-1, -1, -1):
-        Ti = utils.invert_transform(link_configs[i, :])
-        Vi = link_vels[i, :]
-        Vi_dot = link_accels[i, :]
-        Gi = inertias[i, :, :]
+        
+
+    for i in csdl.frange(n_joints):
+        idx = n_joints - i - 1
+
+        Ti = link_configs[idx + 1, :]
+        Vi = csdl.transpose(link_vels[idx + 1, :])
+        Vi_dot = csdl.transpose(link_accels[idx + 1, :])
+        Gi = inertias[idx, :, :]
 
         Fi = csdl.matmat(csdl.transpose(utils.adjoint(Ti)), F_upstream)\
             + csdl.matmat(Gi, Vi_dot)\
             - csdl.matmat(csdl.matmat(csdl.transpose(utils.lie_bracket(Vi)), Gi), Vi)
         
-        torques[i] = csdl.matmat(csdl.transpose(Fi), axes[i, :])
+        F_upstream = Fi
+
+        torque = csdl.vdot(Fi, axes[idx, :])
+        torques = torques.set(csdl.slice[idx], torque)
     
+    print('cs', link_accels.value.T)
     return torques
 
-def forward_dynamics(q, qdot, tau, link_frames, screw_axes, inertias, grav=csdl.Variable(value=np.array([0, 0, -9.81]))):
+def forward_dynamics(q, qdot, tau, link_frames, screw_axes, inertias, grav):
     n_joints = q.shape[0]
 
     # init mass matrix
@@ -90,7 +109,7 @@ def forward_dynamics(q, qdot, tau, link_frames, screw_axes, inertias, grav=csdl.
     h = inverse_dynamics(q, qdot, zero_twist, link_frames, screw_axes, inertias, grav)
 
     # Find mass matrix
-    for i in range(n_joints):
+    for i in csdl.frange(n_joints):
         # Select i-th element to be non-zero
         qddot = qddot.set(csdl.slice[i], 1)
         # Calculate i-th column of mass-matrix
