@@ -8,15 +8,24 @@ def linspace(x0: csdl.Variable, x1:csdl.Variable, n: int, endpoint: bool = True)
     # If-statement is OK if the value doesn't change after compile time
     res = csdl.Variable(shape=(n,), value=0, name='linspace')
     step = (x1 - x0)/(n-endpoint)
-    step.add_name('step_size')
 
     for i in csdl.frange(n):
         res = res.set(csdl.slice[i], x0 + step*i)
     return res
 
-def smooth_abs(x, k=20):
-    operation = 1 / (1 + csdl.exp(-k*x)) * 2 - 1
+def smooth_abs(x, k=20, safe=False):
+    # exp(x) will give an overflow error if (x>700)
+    if safe:
+        x1 = csdl.Variable(shape=(2, *x.shape), value=-700/k)
+        x1 = x1.set(csdl.slice[1, :], x)
+        safe_x = csdl.maximum(x1, axes=(0,))
+        operation = 1 / (1 + csdl.exp(-k*safe_x)) * 2 - 1
+    else:
+        operation = 1 / (1 + csdl.exp(-k*x)) * 2 - 1
     return x * operation
+
+def abs(x, eps=1e-10):
+    return csdl.sqrt(x**2 + eps)
 
 def euler_angle_to_rotation_matrix(angle: csdl.Variable):
     """Convert euler angles (roll, pitch, yaw) into a rotation matrix

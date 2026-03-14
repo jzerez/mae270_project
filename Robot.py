@@ -4,7 +4,8 @@ import utils
 import kinematics
 import mass_inertia
 import actuator_model
-
+import cubic_spline
+from toppra import toppra
 
 class Robot():
     def __init__(self, j_ang, j_pos, 
@@ -69,8 +70,8 @@ class Robot():
         self.a_gear = a_gear
 
         rho = 2700 # [kg/m^3]
-
-        payload=5 # [kg]
+        payload=1 # [kg]
+        self.grav = csdl.Variable(value=np.array([0, 0, -9.81]))
 
         self.link_lens = self.calc_link_lens()
         
@@ -81,7 +82,11 @@ class Robot():
 
         self.link_masses, coms, self.inertias = mass_inertia.build_Glist(self.link_lens, l_id, l_t, rho, a_masses_temp)
         self.link_to_joint_frames, self.link_to_link_frames = self.calc_link_frames(coms)
-        # pass
+        
+        self.total_mass = csdl.sum(self.link_masses) + payload
+        self.total_power = csdl.sum(self.a_power)
+        self.payload = payload
+        self.ik = kinematics.InverseKinematics(self.screw_axes, self.ee_frame, 'ik')
 
     def calc_joint_frames(self, j_ang, j_pos):
 
@@ -104,7 +109,7 @@ class Robot():
             world_transform = csdl.matmat(world_transform, self.joint_frames[i])
             screw = utils.joint_transform_to_screw_axis(world_transform)
             screws = screws.set(csdl.slice[i], screw)
-        
+        self.ee_frame = world_transform
         return screws
     
     def calc_actuator_params(self, a_power, a_gear):
@@ -185,6 +190,54 @@ class Robot():
             lens = lens.set(csdl.slice[i-1], csdl.norm(p))
         return lens
 
+    def forward_kinematics(self, q):
+        return utils.forward_kinematics_screw(self.screw_axes, q, self.ee_frame)
+    
+    def inverse_kinematics(self, target_frame):
+        self.ik = kinematics.InverseKinematics(csdl.transpose(self.screw_axes), self.ee_frame, 'ik')
+        ik_input = csdl.VariableGroup()
+        theta = csdl.ImplicitVariable(value=np.zeros((self.n_joints, )), name='theta')
+        ik_input.theta = theta
+        ik_input.goal = target_frame
+
+        ik_err = self.ik.evaluate(ik_input).err
+        solver = csdl.nonlinear_solvers.Newton(print_status=False)
+        solver.add_state(theta, ik_err, tolerance=1e-4)
+        solver.run()
+        
+        return theta, ik_err
+    
+    def calc_waypoints(self, target_frames):
+        # Takes a sequence of transforms in task-space and constructs a path 
+        n_frames = target_frames.shape[2]
+        
+        q = csdl.Variable(shape=(self.n_joints, n_frames), value=0)
+
+        total_err = csdl.Variable(shape=(1,), value=0)
+
+        # Do IK for each target, accumulate error
+        for i in csdl.frange(n_frames):
+            frame = target_frames[:, :, i]
+            theta, err = self.inverse_kinematics(frame)
+            q = q.set(csdl.slice[:, i], theta)
+            total_err += csdl.norm(err)
+
+        return q, total_err
+    
+    def calc_path(self, q_ref, points_per_segment=50):
+        n_ref = q_ref.shape[1]
+        s_ref = csdl.Variable(value=np.linspace(0, 1, n_ref))
+        spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
+        s, q, qdot, qddot = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, points_per_segment)
+        return s, q, qdot, qddot
+    
+    def calc_traj(self, q_ref, points_per_segment=50):
+        s, q, qdot, qddot = self.calc_path(q_ref, points_per_segment)
+        t, qt, qtt, tau = toppra(s, q, qdot, qddot, self.torque_lims,
+                                 self.vel_lims, self.link_to_link_frames,
+                                 self.screw_axes, self.inertias, self.grav, return_all=False)
+
+        return t, qt, qtt, tau
 
 
 

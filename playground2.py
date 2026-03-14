@@ -4,6 +4,7 @@ import csdl_alpha as csdl
 import matplotlib.pyplot as plt
 import utils
 import kinematics
+from create_urdf import create_urdf
 
 inline_test = False
 recorder = csdl.Recorder(inline=True)
@@ -29,13 +30,13 @@ j2_ang = csdl.Variable(name='j2_ang', shape=(3, ), value=np.array([np.pi/2, -np.
 j3_pos = csdl.Variable(name='j3_pos', shape=(3, ), value=np.array([0, 1.5, 0]))
 j3_ang = csdl.Variable(name='j3_ang', shape=(3, ), value=np.array([np.pi/2, -np.pi/2, np.pi/4]))
 
-j1_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), -2 * np.pi))
+j1_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), 2 * np.pi))
 
 j2_pos.set_as_design_variable()
-j2_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), -2 * np.pi))
+j2_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), 2 * np.pi))
 
 j3_pos.set_as_design_variable()
-j3_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), -2 * np.pi))
+j3_ang.set_as_design_variable(lower=np.full((3,), -2 * np.pi), upper=np.full((3,), 2 * np.pi))
 
 ### Initialize Objective ###
 total_error = csdl.Variable(name='total_error', shape=(1,), value=0)
@@ -101,7 +102,7 @@ for i in csdl.frange(all_target_pos.shape[1]):
     ik_input.goal = target_transform
 
     ik_err = ik.evaluate(ik_input).err
-    solver = csdl.nonlinear_solvers.Newton(name='newton'+str(i))
+    solver = csdl.nonlinear_solvers.Newton(name='newton'+str(i), print_status=False)
     solver.add_state(theta, ik_err, tolerance=1e-4)
     solver.run()
 
@@ -119,7 +120,19 @@ else:
     from csdl_alpha.experimental import PySimulator, JaxSimulator
 
     # Create a Simulator object from the Recorder object
-    sim = PySimulator(recorder)
+    sim = JaxSimulator(
+        recorder=recorder,
+        additional_inputs=[
+            j1_ang,
+            j2_pos,
+            j2_ang,
+            j3_pos,
+            j3_ang
+        ],
+        additional_outputs=[
+            total_error
+        ]
+    )
 
     # Import CSDLAlphaProblem from modopt
     from modopt import CSDLAlphaProblem
@@ -152,3 +165,12 @@ else:
     print('j2_ang:', j2_ang.value)
     print('j3_pos:', j3_pos.value)
     print('j3_ang:', j3_ang.value)
+
+
+    my_configs = [
+        {'xyz': [0, 0, 0], 'rpy': j1_ang.value},        # Joint 0
+        {'xyz': j2_pos.value, 'rpy': j2_ang.value},  # Joint 1
+        {'xyz': j3_pos.value, 'rpy': j3_ang.value},        # Joint 2
+    ]
+
+    robot = create_urdf(my_configs, 'p2.urdf')

@@ -162,4 +162,3 @@ if __name__ == "__main__":
     # 
     # Compute Derivative 
     # Return the derivative of the error twist (pseudo-inverse of Jacobian)? 
-            

@@ -3,10 +3,10 @@ import numpy as np
 import dynamics
 import utils
 import cubic_spline
-from Robot import Robot
 
 def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
-           link_frames, screw_axes, inertias, grav):
+           link_frames, screw_axes, inertias, grav,
+           return_all=False):
     """_summary_
 
     Args:
@@ -162,7 +162,10 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         tau_i = dynamics.inverse_dynamics(q[:, i], qt[:, i], qtt[:, i], link_frames, screw_axes, inertias, grav)
         tau = tau.set(csdl.slice[:, i], tau_i)
 
-    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins
+    if return_all:
+        return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins
+    else:
+        return t, qt, qtt, tau
 
 def calc_x_max_joint(qdot, vel_lim, rho=200): 
     n_joints, n = qdot.shape
@@ -181,7 +184,7 @@ def calc_accel_bounds(x, a, b, c, torque_lim, rho=200, eps=1e-10, acc_lim=2.5e3)
     # is close to zero (where our sigmoid is not very accurate), acceleration
     # along s requires very little torque, which means that it is unlikely that 
     # that particular joint is driving the overall acceleration limit. 
-    upper = (torque_lim - b * x - c) / utils.smooth_abs(a + eps, k=10)
+    upper = (torque_lim - b * x - c) / utils.abs(a, eps)
 
     amax = csdl.minimum(upper, rho=rho)
     amin = csdl.maximum(-upper, rho=rho)
@@ -205,6 +208,7 @@ if __name__ == "__main__":
     import utils
     import dynamics
     import modern_robotics as mr
+    from Robot import Robot
 
     # 4 waypoints, 3 joints
     q_ref = np.array([
@@ -256,7 +260,7 @@ if __name__ == "__main__":
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
-        robot.link_to_link_frames, robot.screw_axes, robot.inertias, grav)
+        robot.link_to_link_frames, robot.screw_axes, robot.inertias, grav, True)
     
     
     recorder.stop()
