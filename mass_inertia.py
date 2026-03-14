@@ -139,7 +139,7 @@ def spatial_inertia(mass, I_com):
     return G
 
 
-def build_Glist(link_params):
+def build_Glist(l_lens, l_ids, l_ts, rho, a_masses):
     """
     Build a list of spatial inertias for a robot.
 
@@ -166,41 +166,29 @@ def build_Glist(link_params):
             "Glist": [...]
         }
     """
-    masses = []
-    coms = []
-    inertias = []
-    Glist = []
+    n_links = l_lens.shape[0]
 
-    for p in link_params:
-        motor_mass = p.get("motor_mass", None)
-        motor_pos = p.get("motor_pos", None)
+    l_masses = csdl.Variable(shape=(n_links,), value=0)
+    l_coms = csdl.Variable(shape=(n_links, 3), value=0)
+    l_inertias = csdl.Variable(shape=(n_links, 6, 6), value=0)
 
-        if motor_pos is not None and not isinstance(motor_pos, csdl.Variable):
-            motor_pos = csdl.Variable(shape=(3,), value=np.array(motor_pos))
-
+    for i in csdl.frange(n_links):
         m, c, I = link_inertial_properties(
-            p["L"],
-            p["ri"],
-            p["t"],
-            p["rho"],
-            motor_mass=motor_mass,
-            motor_pos=motor_pos,
+            l_lens[i],
+            l_ids[i]/2,
+            l_ts[i],
+            rho,
+            motor_mass = a_masses[i],
+            motor_pos = l_lens[i]
         )
 
         G = spatial_inertia(m, I)
 
-        masses.append(m)
-        coms.append(c)
-        inertias.append(I)
-        Glist.append(G)
-
-    return {
-        "masses": masses,
-        "coms": coms,
-        "inertias": inertias,
-        "Glist": Glist,
-    }
-
+        l_masses = l_masses.set(csdl.slice[i], m)
+        l_coms = l_coms.set(csdl.slice[i], c)
+        l_inertias = l_inertias.set(csdl.slice[i], G)
+    
+    return l_masses, l_coms, l_inertias
 
 if __name__ == "__main__":
     import csdl_alpha as csdl

@@ -1,6 +1,6 @@
 import numpy as np
 import csdl_alpha as csdl
-
+import utils
 def fit_cubic_spline(s: csdl.Variable, y: csdl.Variable):
     """Computes constants for a piecewise cubic polynomial through the provided waypoints
     Given n_waypoints, the number of piecewise polynomials (n_segments) will be one fewer. 
@@ -79,18 +79,20 @@ def discretize_spline(s, y, coeffs, points_per_segment=25):
 
     Returns:
         s_fine (csdl.Variable): (n,) Vector of all parametric values used
-        waypoints (csdl.Variable): (n_joints, n) Vector of all generated waypoints
+        q (csdl.Variable): (n_joints, n) Matrix of all generated waypoints
+        qdot (csdl.Variable): (n_joints, n) Matrix of first path derivatives 
+        qddot (csdl.Variable): (n_joints, n) Matrix of second path derivatives 
     """
     
     n_joints, n_segments, _ = coeffs.shape
 
-    waypoints = csdl.Variable(shape=(n_joints, points_per_segment * n_segments + 1), value=0)
     s_fine = csdl.Variable(shape=(points_per_segment * n_segments + 1,), value=0)
+    q = csdl.Variable(shape=(n_joints, points_per_segment * n_segments + 1), value=0)
+    qdot = csdl.Variable(shape=q.shape, value=0)
+    qddot = csdl.Variable(shape=q.shape, value=0)
 
     for i in range(1, n_segments+1):
-        # TODO: fix the line below--will not be differentiable
-        ds = np.linspace(s[i-1].value, s[i].value, points_per_segment, endpoint=False)
-        ds = csdl.Variable(value=ds.flatten())
+        ds = utils.linspace(s[i-1], s[i], points_per_segment, endpoint=False)
 
         start_idx = (i - 1) * points_per_segment
         end_idx = i * points_per_segment
@@ -100,12 +102,27 @@ def discretize_spline(s, y, coeffs, points_per_segment=25):
 
         for j in range(n_joints):
             c = coeffs[j, i-1, :]
-            interp_values = c[0]*ds**3 + c[1]*ds**2 + c[2]*ds + c[3]
-            waypoints = waypoints.set(csdl.slice[j, start_idx:end_idx], interp_values)
+            vals = c[0]*ds**3 + c[1]*ds**2 + c[2]*ds + c[3]
+            vals_dot = 3*c[0]*ds**2 + 2*c[1]*ds + c[2]
+            vals_ddot = 6*c[0]*ds + 2*c[1]
 
-    waypoints = waypoints.set(csdl.slice[:, -1], y[:, -1])
+            q = q.set(csdl.slice[j, start_idx:end_idx], vals)
+            qdot = qdot.set(csdl.slice[j, start_idx:end_idx], vals_dot)
+            qddot = qddot.set(csdl.slice[j, start_idx:end_idx], vals_ddot)
+
+    # fill in the last points
     s_fine = s_fine.set(csdl.slice[-1], s[-1])
-    return s_fine, waypoints
+    q = q.set(csdl.slice[:, -1], y[:, -1])
+
+    c = coeffs[:, -1, :]
+    ds = s[-1] - s[-2]
+    last_qdot = 3*c[:, 0]*ds**2 + 2*c[:, 1]*ds + c[:, 2]
+    last_qddot = 6*c[:, 0]*ds + 2*c[:, 1]
+
+    qdot = qdot.set(csdl.slice[:, -1], last_qdot)
+    qddot = qddot.set(csdl.slice[:, -1], last_qddot)
+
+    return s_fine, q, qdot, qddot
 
 
 def evaluate_spline(s_query, s_waypoints, coeffs):

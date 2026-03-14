@@ -47,9 +47,6 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav):
         new_axis = csdl.matmat(utils.adjoint(utils.invert_transform(Mi_total)), screw_axes[i, :])
         axes = axes.set(csdl.slice[i, :], new_axis)
     
-    
-
-    for i in csdl.frange(n_links):
         # Transform of link i, expressed in link i-1's frame
         Ti = csdl.matmat(utils.transform_exp(axes[i, :], -q[i]), utils.invert_transform(link_frames[i, :, :]))
 
@@ -69,12 +66,12 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav):
             + qdot[i] * csdl.matmat(utils.lie_bracket(Vi), axes[i, :])
         Vi_dot_prev = Vi_dot
         
+        # Save the calculated values
         link_configs = link_configs.set(csdl.slice[i], Ti)
         link_vels = link_vels.set(csdl.slice[i+1], Vi)
         link_accels = link_accels.set(csdl.slice[i+1], Vi_dot)
 
-        
-
+    # Backwards iteration 
     for i in csdl.frange(n_joints):
         idx = n_joints - i - 1
 
@@ -91,8 +88,7 @@ def inverse_dynamics(q, qdot, qddot, link_frames, screw_axes, inertias, grav):
 
         torque = csdl.vdot(Fi, axes[idx, :])
         torques = torques.set(csdl.slice[idx], torque)
-    
-    print('cs', link_accels.value.T)
+
     return torques
 
 def forward_dynamics(q, qdot, tau, link_frames, screw_axes, inertias, grav):

@@ -1,6 +1,23 @@
 import numpy as np
 import csdl_alpha as csdl
 
+def unit(vec: csdl.Variable):
+    return vec / csdl.norm(vec)
+
+def linspace(x0: csdl.Variable, x1:csdl.Variable, n: int, endpoint: bool = True):
+    # If-statement is OK if the value doesn't change after compile time
+    res = csdl.Variable(shape=(n,), value=0, name='linspace')
+    step = (x1 - x0)/(n-endpoint)
+    step.add_name('step_size')
+
+    for i in csdl.frange(n):
+        res = res.set(csdl.slice[i], x0 + step*i)
+    return res
+
+def smooth_abs(x, k=20):
+    operation = 1 / (1 + csdl.exp(-k*x)) * 2 - 1
+    return x * operation
+
 def euler_angle_to_rotation_matrix(angle: csdl.Variable):
     """Convert euler angles (roll, pitch, yaw) into a rotation matrix
     Applies using the ZYX rotation order 
@@ -493,14 +510,20 @@ if __name__ == "__main__":
     import modern_robotics as mr
     recorder = csdl.Recorder(inline=True)
     recorder.start()
-    T = np.array([[ 1,    -0,     0,     0.26 ],
-                    [-0,     1,     0,     0.043],
-                    [ 0,     0,     1,     0   ],
-                    [ 0,     0,     0,     1   ]])
-    
-    omega, theta = transform_log(csdl.Variable(value=T))
-    twist = theta*omega
-    recorder.stop()
+    a = csdl.Variable(shape=(1,), value=1)
+    b = csdl.Variable(shape=(1,), value=10)
+    n = int(10)
 
-    print(omega.value, theta.value, twist.value)                    
-    print(mr.se3ToVec(mr.MatrixLog6(T)))
+  
+    ls1 = linspace(a, b, n, True)
+    ls2 = linspace(a, b, n, False)
+
+    recorder.stop()
+    recorder.visualize_graph('linspace')
+    print(ls1.value)
+    print(ls2.value)
+
+
+
+    
+
