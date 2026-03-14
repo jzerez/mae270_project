@@ -162,7 +162,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         tau_i = dynamics.inverse_dynamics(q[:, i], qt[:, i], qtt[:, i], link_frames, screw_axes, inertias, grav)
         tau = tau.set(csdl.slice[:, i], tau_i)
 
-    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins, x_max
+    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins
 
 def calc_x_max_joint(qdot, vel_lim, rho=200): 
     n_joints, n = qdot.shape
@@ -251,10 +251,10 @@ if __name__ == "__main__":
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=800)
-    vel_lim = csdl.Variable(shape=(3,), value=10)
+    torque_lim = csdl.Variable(shape=(3,), value=1000)
+    vel_lim = csdl.Variable(shape=(3,), value=1.2)
 
-    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x_max = toppra(
+    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
         robot.link_to_link_frames, robot.screw_axes, robot.inertias, grav)
     
@@ -294,7 +294,6 @@ if __name__ == "__main__":
                 sddot_mins,
                 torque_lim,
                 vel_lim,
-                x_max,
             ]
         )
         import time
@@ -306,133 +305,99 @@ if __name__ == "__main__":
 
         # Plot 1x3 of q(s), qs(s) and qss(s). Why the jump at the end? 
         # qs(s) has a shock at the end...
-        fig, axs = plt.subplots(1, 3)
-        titles = ['q', 'qs', 'qss']
+        fig, axs = plt.subplots(1, 4, figsize=(12, 4), layout="constrained",
+                        gridspec_kw={'width_ratios': [1, 1, 1, 0.2]})
+        
+        ylabels = [r'$q$', r'$q_s$', r'$q_{ss}$']
+        line_labels = ['j0', 'j1', 'j2']
+
         vars = [jax_sim[q], jax_sim[qdot], jax_sim[qddot]] 
         for i in range(3):
-            axs[i].plot(jax_sim[s], vars[i].T)
-            [axs[i].axvline(s_loc, color='k', linestyle=':', linewidth=1) for s_loc in jax_sim[s_ref]]
-            axs[i].set_title(titles[i])
+            lines = axs[i].plot(jax_sim[s], vars[i].T)
+            for s_loc in jax_sim[s_ref]:
+                # We only need to label the vline once for the legend to pick it up
+                vl = axs[i].axvline(s_loc, color='k', linewidth=1, linestyle=':', label='Waypoints')
+            
+            axs[i].set(
+                ylabel=ylabels[i],
+                xlabel='s',
+            )
             axs[i].grid()
+        
+        axs[3].axis('off')
+        all_handles = [*lines, vl]
+        all_labels = [*line_labels, 'Waypoints']
+
+        # 3. Create the legend on the 4th axis
+        axs[3].legend(all_handles, all_labels, loc='center left', frameon=False)
+
+        fig.suptitle('Parameterized Path Information')
 
         # # Plot s vs t
         fig, ax = plt.subplots()
         ax.plot(jax_sim[s], jax_sim[t])
-        ax.set(
-            xlabel='s', ylabel='t'
-        )
-
-
-
-        # print('s:\n', jax_sim[s], '\nt:\n', jax_sim[t], '\n x \n:', jax_sim[x])
-
-        # print('--------------')
-        # ds = jax_sim[s]
-        # x_check = jax_sim[x] + 2*0.004*jax_sim[sddot]
-        # print('dynamic consistency;')
-        # print(jax_sim[x][1:] - x_check[:-1])
-
-
-        # fig, ax = plt.subplots()
-        # ax.plot(jax_sim[s], jax_sim[all_x][1, :], label='x max')
-        # ax.plot(jax_sim[s], jax_sim[x], label='x')
-        # ax.plot(jax_sim[s], jax_sim[all_x][0, :], label='x lim')
-        # [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1) for s_loc in jax_sim[s_ref]]
-        # ax.set(
-        #     xlabel='s',
-        #     ylabel='x'
-        # )
-        # ax.legend()
-
-
-        # Plot 1x1 of tau vs. a*sddot + b*x + c
-        # They match very well. 
-        # fig, ax = plt.subplots()
-        # ax.plot(jax_sim[t], jax_sim[tau].T, label='ID torque')
-        # ax.plot(jax_sim[t], (jax_sim[a] * jax_sim[sddot] + jax_sim[b] * jax_sim[sdot]**2 + jax_sim[c]).T, 'k--', alpha=0.8, label='abc torque')
-        # # [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1) for s_loc in jax_sim[s_ref]]
-        # ax.legend()
-        # ax.set_title('ID torque vs. abc torque')
-
-        # Plot 1x1 of sddot vs sddot limits 
-        # At each waypoint, it seems like there is a spike in sddot bandwidth. 
-        # At the third waypoint, the max and min lines cross(!)
-        # The last waypoint explodes off to a super high value...
-        fig, ax = plt.subplots()
-        ax.plot(jax_sim[s], jax_sim[sddot])
-        ax.plot(jax_sim[s], jax_sim[sddot_maxes], 'k--', label='sddot_max', alpha=0.5)
-        ax.plot(jax_sim[s], jax_sim[sddot_mins], 'r:', label='sddot_min', alpha=0.5)        
-        [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='waypt') for s_loc in jax_sim[s_ref]]
-        # [ax.axvline(s_loc, color='k', linewidth=1, label='weird') for s_loc in jax_sim[s][idx]]
+        [ax.axvline(s_loc, color='k', linewidth=1, linestyle=':', label='Waypoints') for s_loc in jax_sim[s_ref]]
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         ax.legend(by_label.values(), by_label.keys())
-        # Maybe turn off the secondary 
+        ax.set(
+            xlabel='s', ylabel='t', title='Time Parameterization'
+        )
+        ax.grid()
 
-        # q_ref = np.array([
-        #     [0.0, 0.0, 0.25],
-        #     [0.5, 1.5, 0.0],
-        #     [1.2, 0.5, 3.0],
-        #     [1.0, 2.0, 2.0],
-        #     [2.0, 0.0, 2.0],
-        #     [2.0, 0.25, 1.5]
-        # ])
-        # fig, axs = plt.subplots(1, 2)
-        # ax = axs[0]
-        # ax.plot(jax_sim[s], jax_sim[all_x][0, :])
-        # [ax.axvline(l, linestyle='--', color='k') for l in jax_sim[s_ref]]        
-        # ax.set_title('x_dot limited by joint lims')
-        # ax.set_yscale('log')
+        # plot joint torque and velocity vs. time
+        fig, axs = plt.subplots(2, 4, figsize=(25, 8), gridspec_kw={'width_ratios': [1, 1, 1, 0.1]}, layout="constrained")
+        mask = np.isin(jax_sim[s], jax_sim[s_ref])
+        idx = np.where(mask)[0]
 
-        # ax = axs[1]
-        # ax.plot(jax_sim[s], jax_sim[all_x][1, :])
-        # [ax.axvline(l, linestyle='--', color='k') for l in jax_sim[s_ref]]  
-        # ax.set_title('x_dot limited by dyn')
-        # ax.set_yscale('log')
-
-        # jax_xmax = jax_sim[all_x][1, :]
-        # weird = jax_xmax[np.bitwise_not(jax_xmax > 5e7)]
-
-        # fig, ax = plt.subplots()
-        # ax.plot(jax_sim[s], jax_sim[qddot][0, :], label='j0')
-        # ax.plot(jax_sim[s], jax_sim[qddot][1, :], label='j1')
-        # ax.plot(jax_sim[s], jax_sim[qddot][2, :], label='j2')
-        # ax.legend()
-        # ax.set_title('qddot')
-        fig, axs = plt.subplots(2, 3, figsize=(20, 8))
-        
         for i in range(3):
             axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :], label='vel')
             axs[0][i].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
             axs[0][i].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
+            [axs[0][i].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[0][i].set(
                 title=f'J{i} Vel',
                 xlabel='time [s]',
                 ylabel='vel [rad/s]',
             )
             axs[0][i].grid()
-            axs[0][i].legend()
+           
 
-            axs[1][i].plot(jax_sim[t], jax_sim[tau][i, :])
+            axs[1][i].plot(jax_sim[t], jax_sim[tau][i, :], label='torque')
             axs[1][i].axhline(jax_sim[torque_lim][i], linestyle='--', color='k', label='max_torque')
             axs[1][i].axhline(-jax_sim[torque_lim][i], linestyle='--', color='r', label='min_torque')
-
+            [axs[1][i].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[1][i].set(
                 title=f'J{i} Torque',
                 xlabel='time [s]',
                 ylabel='Torque [Nm]',
             )
             axs[1][i].grid()
-            axs[1][i].legend()
+        for i in range(2):
+            legend_ax = axs[i, 3]
+            legend_ax.axis('off') # Hide the axis lines/ticks
+            
+            # Get handles from one of the plots in the row
+            handles, labels = axs[i, 0].get_legend_handles_labels()
 
+            by_label = dict(zip(labels, handles))
+            
+            # Place the legend in the dedicated empty axis
+            legend_ax.legend(by_label.values(), by_label.keys(), loc='center left', frameon=False)    
+        fig.set_constrained_layout_pads(w_pad=0.1, h_pad=0.1)
+
+        # Plot Path accel info
         fig, ax = plt.subplots()
-        ax.plot(jax_sim[s], jax_sim[sddot])
+        ax.plot(jax_sim[s], jax_sim[sddot], label='Actual path accel')
         ax.plot(jax_sim[s], jax_sim[sddot_maxes], 'k--', label='max')
         ax.plot(jax_sim[s], jax_sim[sddot_mins], 'r--', label='min')
-        ax.plot(jax_sim[s], jax_sim[x_max], 'g-')
+        [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for s_loc in jax_sim[s_ref]]
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
         ax.set(
             xlabel='s',
-            ylabel=r'$\dot{\dot{s}}$',
+            ylabel=r'$\ddot{s}$',
             title='Feasible path accels'
         )
         ax.grid()
