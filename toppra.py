@@ -40,7 +40,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     ds = s[1] - s[0]
 
     # Acceleration limit
-    acc_lim = 2.5e3
+    acc_lim = 5e3
 
     eps = 1e-10
 
