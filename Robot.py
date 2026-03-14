@@ -10,6 +10,52 @@ class Robot():
     def __init__(self, j_ang, j_pos, 
                  a_power, a_gear, 
                  l_id, l_t):
+        """Initialize a Robot object
+
+        Args:
+            j_ang (csdl.Variable): (n_joints, 3) Euler angles of each joint's axis relative to its parent [rad]
+                first joint is expressed relative to the global/world frame.
+            j_pos (csdl.Variable): (n_joints, 3) Location of each joint's frame relative to its parent [m]
+                first joint is expressed relative to the global/world frame and should be zero
+            a_power (csdl.Variable): (n_joints,) Power for each actuator [W]
+            a_gear (csdl.Variable): (n_joints,) Gear ratio for each actuator. Larger value = more torque[unitless]
+            l_id (csdl.Variable): (n_links,) Inner diameter for each link [m]
+            l_t (csdl.Variable): (n_links,) Wall-thickness for each link [m]
+
+        Attributes:
+            n_joints (int): number of joints
+            joint_frames (csdl.Variable): (n_joints, 4, 4) transforms for each joint relative to its parent. 
+                Z-axis defines rotation axis
+            screw_axes (csdl.Variable): (n_joints, 6) screw axes for each actuator when the robot is in 
+                the zero config. Defined in the world frame
+            a_masses (csdl.Variable): (n_joints,) mass of each actuator [m]
+            a_power (csdl.Variable): (n_joints,) power of each actuator [W]
+            a_gear (csdl.Variable): (n_joints,) gear ratio of each actuator [unitless]
+            torque_lims (csdl.Variable): (n_joints,) max torque of each actuator. Applied in positive and negative direction. [Nm]
+            vel_lims (csdl.Variable): (n_joints,) max velocity of each actuator. Applied in positive and netavie direction. [rad/s]
+            rho (float): density of link material. Defaults to 2700 for Aluminum [kg/m^3]
+            link_lens (csdl.Variable): (n_links,) length of each link [m]
+            link_masses (csdl.Variable): (n_links,) mass of each link [kg]
+            inertias (csdl.Variable): (n_links, 6, 6) Spatial inertia for each link [kg, kgm^2]
+            link_to_joint_frames (csdl.Variable): (n_links, 4, 4) transform expressing each link's COM frame
+                relative to the joint frame of the nearest-upstream actuator (ie: the actuator that moves the link)
+            link_to_link_frames (csdl.Variable): (n_links, 4, 4) transform expressing each link's COM frame
+                relative to the link COM frame of the nearest-upstream link 
+            total_mass (csdl.Variable): (1,) total robot mass [m]
+        Notes:
+            - Joint frames are defined with Z-axis representing rotation
+            - Link frames are defined at the link's center of mass and with axes aligned with the principal moments of inertia
+            - A robot always has n_links = n_joints + 1
+                - 1st link: body of the 1st actuator
+                    - Assume the link's COM frame is co-located with the joint's frame
+                - 2nd link: body of the 2nd actuator + body of 1st tube
+                - ith link: body of the ith actuator + body of (i-1)th tube
+                - nth link: body of the end-effector (what is attached to the last joint)
+            - A robot's end effector is assumed to have mass equal to the payload and be attached directly to the frame of the last joint
+            - A robot's first joint must be located at the origin but may have any orientation                 
+
+        """
+
         # todo: add param checks
         self.n_joints = j_ang.shape[0]
 
@@ -22,7 +68,9 @@ class Robot():
         self.a_power = a_power
         self.a_gear = a_gear
 
-        rho = 1
+        rho = 2700 # [kg/m^3]
+
+        payload=5 # [kg]
 
         self.link_lens = self.calc_link_lens()
         
@@ -34,8 +82,6 @@ class Robot():
         self.link_masses, coms, self.inertias = mass_inertia.build_Glist(self.link_lens, l_id, l_t, rho, a_masses_temp)
         self.link_to_joint_frames, self.link_to_link_frames = self.calc_link_frames(coms)
         # pass
-
-
 
     def calc_joint_frames(self, j_ang, j_pos):
 
