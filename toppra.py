@@ -155,11 +155,13 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         x_i_pair = x_i_pair.set(csdl.slice[0], x[i])
         x_i_pair = x_i_pair.set(csdl.slice[1], 0.0)
         x_i_nonneg = csdl.maximum(x_i_pair, rho=rho)
+        x_i_nonneg = x[i]
 
         x_ip1_pair = csdl.Variable(shape=(2,), value=0.0)
         x_ip1_pair = x_ip1_pair.set(csdl.slice[0], x[i + 1])
         x_ip1_pair = x_ip1_pair.set(csdl.slice[1], 0.0)
         x_ip1_nonneg = csdl.maximum(x_ip1_pair, rho=rho)
+        x_ip1_nonneg = x[i + 1]
 
 
         sddot_max, sddot_min = calc_accel_bounds(x[i], a[:, i:i+2], b[:, i:i+2], c[:, i:i+2],
@@ -291,15 +293,16 @@ if __name__ == "__main__":
                  a_power, a_gear, 
                  l_id, l_t)
     
-    # robot.inertias = robot.inertias.set(csdl.slice[-1, :, :], csdl.Variable(value=np.identity(6)*5))
+    robot.inertias = robot.inertias.set(csdl.slice[-1, :, :], csdl.Variable(value=np.identity(6)*100))
+    robot.inertias *= 0.5
     q_ref = csdl.Variable(value=q_ref.T)
     s_ref = csdl.Variable(value=s_ref)
     spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
     s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 200)
 
 
-    grav = csdl.Variable(value=np.array([0, 0, -9.81]))*0
-    torque_lim = csdl.Variable(shape=(3,), value=50)
+    grav = csdl.Variable(value=np.array([0, 0, -9.81]))*1
+    torque_lim = csdl.Variable(shape=(3,), value=300)
     vel_lim = csdl.Variable(shape=(3,), value=2.2)
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min, x_max_stack, a, b,  = toppra(
@@ -399,11 +402,7 @@ if __name__ == "__main__":
         idx = np.where(mask)[0]
 
         for i in range(3):
-            if i == 2:
-                cheat = 2.2/2.24
-            else:
-                cheat = 1
-            axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :]*cheat, label='vel')
+            axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :], label='vel')
             axs[0][i].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
             axs[0][i].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
             [axs[0][i].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
@@ -528,11 +527,7 @@ if __name__ == "__main__":
         idx = np.where(mask)[0]
 
         for i in range(3):
-            if i == 2:
-                cheat = 2.2/2.24
-            else:
-                cheat = 1
-            axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :]*cheat, label=f'J{i}')
+            axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :], label=f'J{i}')
             
             axs[0][0].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
             axs[0][0].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')

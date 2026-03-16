@@ -18,6 +18,25 @@ def smooth_abs(x, k=20):
     operation = 1 / (1 + csdl.exp(-k*x)) * 2 - 1
     return x * operation
 
+
+def abs(x, eps=1e-10):
+    return csdl.sqrt(x**2 + eps)
+
+def safe_max(x, axes=None, rho=20):
+    n = x.size
+    if not axes is None:
+        for i in axes:
+            n /= x.shape[i]
+    return csdl.maximum(x, axes=axes, rho=rho) - csdl.log(n/rho)
+
+def safe_min(x, axes=None, rho=20):
+    n = x.size
+    if not axes is None:
+        for i in axes:
+            n /= x.shape[i]
+    return csdl.maximum(x, axes=axes, rho=rho) + csdl.log(n/rho)
+
+
 def euler_angle_to_rotation_matrix(angle: csdl.Variable):
     """Convert euler angles (roll, pitch, yaw) into a rotation matrix
     Applies using the ZYX rotation order 
