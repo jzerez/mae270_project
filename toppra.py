@@ -271,12 +271,12 @@ if __name__ == "__main__":
     q_ref = csdl.Variable(value=q_ref.T)
     s_ref = csdl.Variable(value=s_ref)
     spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
-    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 50)
+    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 35)
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=100)
-    vel_lim = csdl.Variable(shape=(3,), value=1.2)
+    torque_lim = csdl.Variable(shape=(3,), value=75)
+    vel_lim = csdl.Variable(shape=(3,), value=2.0)
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
