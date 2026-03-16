@@ -40,7 +40,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     ds = s[1] - s[0]
 
     # Acceleration limit
-    acc_lim = 5e3
+    acc_lim = 5e2
 
     eps = 1e-10
 
@@ -87,7 +87,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         xi = csdl.ImplicitVariable(shape=(1,), value=100)
 
         # Find best xi that satisfies dynamic constraints
-        _, sddot_min = calc_accel_bounds(xi, a[:, idx], b[:, idx], c[:, idx], torque_lim,
+        _, sddot_min = calc_accel_bounds(xi, a[:, idx:idx+2], b[:, idx:idx+2], c[:, idx:idx+2], torque_lim, ds,
                                          eps=eps, rho=rho, acc_lim=acc_lim)
         
         # Guarantee we're smaller than x_max to within convergence tolerance 
@@ -119,8 +119,8 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     x_min = csdl.Variable(shape=(n,), value=0)
     for i in csdl.frange(n-1):
         xi = x[i]
-        sddot_max, sddot_min = calc_accel_bounds(xi, a[:, i], b[:, i], c[:, i], 
-                                                 torque_lim, eps=eps, rho=rho, acc_lim=acc_lim)
+        sddot_max, sddot_min = calc_accel_bounds(xi, a[:, i:i+2], b[:, i:i+2], c[:, i:i+2],
+                                                 torque_lim, ds, eps=eps, rho=rho, acc_lim=acc_lim)
         sddot_mins = sddot_mins.set(csdl.slice[i], sddot_min)
         sddot_maxs = sddot_maxs.set(csdl.slice[i], sddot_max)
 
@@ -136,11 +136,11 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         x_next1 = csdl.minimum(x_next1, rho=rho)
         
         # Extra check, make sure we're greater than the minimum path vel for path feasibility
-        x_next2 = csdl.Variable(shape=(3,), value=0)
-        x_next2 = x_next2.set(csdl.slice[0], x_next1)
-        x_next2 = x_next2.set(csdl.slice[1], x_next_min)
-
-        x = x.set(csdl.slice[i+1], csdl.maximum(x_next2, rho=rho))
+        # x_next2 = csdl.Variable(shape=(3,), value=0)
+        # x_next2 = x_next2.set(csdl.slice[0], x_next1)
+        # x_next2 = x_next2.set(csdl.slice[1], x_next_min)
+        # x = x.set(csdl.slice[i+1], csdl.maximum(x_next2, rho=rho))
+        x = x.set(csdl.slice[i+1], x_next1)
 
     ### Bring back into theta-space ###
     t = csdl.Variable(shape=(n,), value=0)
@@ -161,8 +161,14 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         x_ip1_pair = x_ip1_pair.set(csdl.slice[1], 0.0)
         x_ip1_nonneg = csdl.maximum(x_ip1_pair, rho=rho)
 
+
+        sddot_max, sddot_min = calc_accel_bounds(x[i], a[:, i:i+2], b[:, i:i+2], c[:, i:i+2],
+                                                 torque_lim, ds, eps=eps, rho=rho, acc_lim=acc_lim)
+        
         sdot = csdl.sqrt(x_i_nonneg + eps)
         sddot = (x_ip1_nonneg - x_i_nonneg) / (2 * ds)
+        sddot = csdl.minimum(csdl.vstack((sddot, sddot_max)), rho=rho)
+        sddot = csdl.maximum(csdl.vstack((sddot, sddot_min)), rho=rho)
 
         sdots = sdots.set(csdl.slice[i], sdot)
         sddots = sddots.set(csdl.slice[i], sddot)
@@ -190,7 +196,7 @@ def calc_x_max_joint(qdot, vel_lim, rho=200):
         x_lim = x_lim.set(csdl.slice[i], csdl.minimum(x, rho=rho))
     return x_lim
 
-def calc_accel_bounds(x, a, b, c, torque_lim, rho=200, eps=1e-10, acc_lim=2.5e3):
+def calc_accel_bounds(x, a, b, c, torque_lim, ds, rho=200, eps=1e-10, acc_lim=2.5e3):
     # x = sdot**2
 
     # NOTE: neat trick with smooth abs here
@@ -198,30 +204,47 @@ def calc_accel_bounds(x, a, b, c, torque_lim, rho=200, eps=1e-10, acc_lim=2.5e3)
     # is close to zero (where our sigmoid is not very accurate), acceleration
     # along s requires very little torque, which means that it is unlikely that 
     # that particular joint is driving the overall acceleration limit. 
-    u1 = (torque_lim - b * x - c) / (a + eps)
-    u2 = (-torque_lim - b * x - c) / (a + eps)
+    
+    a = a.set(csdl.slice[:, 1], a[:, 1] + 2 * ds * b[:, 1])
+    torque_lim = csdl.transpose(csdl.vstack((torque_lim, torque_lim)))
+    # print(a.shape, b.shape, c.shape, torque_lim.shape)
+    # u1 = (torque_lim - b * x - c) / (a + eps)
+    # u2 = (-torque_lim - b * x - c) / (a + eps)
 
-    pair = csdl.Variable(shape=(2, a.shape[0]), value=0.0)
-    pair = pair.set(csdl.slice[0, :], u1)
-    pair = pair.set(csdl.slice[1, :], u2)
+    # pair = csdl.Variable(shape=(2, a.shape[0]), value=0.0)
+    # pair = pair.set(csdl.slice[0, :], u1)
+    # pair = pair.set(csdl.slice[1, :], u2)
 
-    lower_joint = csdl.minimum(pair, axes=(0,), rho=rho)
-    upper_joint = csdl.maximum(pair, axes=(0,), rho=rho)
+    # lower_joint = csdl.minimum(pair, axes=(0,), rho=rho)
+    # upper_joint = csdl.maximum(pair, axes=(0,), rho=rho)
 
-    sddot_min = csdl.maximum(lower_joint, rho=rho)
-    sddot_max = csdl.minimum(upper_joint, rho=rho)
+    # sddot_min = csdl.maximum(lower_joint, rho=rho)
+    # sddot_max = csdl.minimum(upper_joint, rho=rho)
 
-    max_pair = csdl.Variable(shape=(2,), value=0.0)
-    max_pair = max_pair.set(csdl.slice[0], sddot_max)
-    max_pair = max_pair.set(csdl.slice[1], acc_lim)
-    sddot_max = csdl.minimum(max_pair, rho=rho)
+    # max_pair = csdl.Variable(shape=(2,), value=0.0)
+    # max_pair = max_pair.set(csdl.slice[0], sddot_max)
+    # max_pair = max_pair.set(csdl.slice[1], acc_lim)
+    # sddot_max = csdl.minimum(max_pair, rho=rho)
 
-    min_pair = csdl.Variable(shape=(2,), value=0.0)
-    min_pair = min_pair.set(csdl.slice[0], sddot_min)
-    min_pair = min_pair.set(csdl.slice[1], -acc_lim)
-    sddot_min = csdl.maximum(min_pair, rho=rho)
+    # min_pair = csdl.Variable(shape=(2,), value=0.0)
+    # min_pair = min_pair.set(csdl.slice[0], sddot_min)
+    # min_pair = min_pair.set(csdl.slice[1], -acc_lim)
+    # sddot_min = csdl.maximum(min_pair, rho=rho)
 
-    return sddot_max, sddot_min
+    # return sddot_max, sddot_min
+    upper = (torque_lim - b * x - c) / utils.abs(a, eps)
+
+    upper_accel = csdl.Variable(shape=(upper.size + 1,), value=0)
+    lower_accel = csdl.Variable(shape=(upper.size + 1,), value=0)
+
+    upper_accel = upper_accel.set(csdl.slice[:-1], upper.flatten())
+    upper_accel = upper_accel.set(csdl.slice[-1], acc_lim)
+
+    lower_accel = lower_accel.set(csdl.slice[:-1], -upper.flatten())
+    lower_accel = lower_accel.set(csdl.slice[-1], -acc_lim)
+
+    return csdl.minimum(upper_accel, rho=rho), csdl.maximum(lower_accel, rho=rho)
+
 
 if __name__ == "__main__":
     import numpy as np
@@ -276,7 +299,7 @@ if __name__ == "__main__":
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))*0
-    torque_lim = csdl.Variable(shape=(3,), value=100)
+    torque_lim = csdl.Variable(shape=(3,), value=50)
     vel_lim = csdl.Variable(shape=(3,), value=2.2)
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min, x_max_stack, a, b,  = toppra(
@@ -285,7 +308,7 @@ if __name__ == "__main__":
     
     
     recorder.stop()
-    if not use_inline:
+    if True:
         jax_sim = csdl.experimental.JaxSimulator(
             recorder=recorder,
             additional_inputs= [
