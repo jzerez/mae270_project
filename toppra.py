@@ -104,6 +104,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     x_max = csdl.Variable(shape=(2, n), value=0)
     x_max = x_max.set(csdl.slice[0, :], x_max_joint)
     x_max = x_max.set(csdl.slice[1, :], x_max_dyn)
+    x_max_stack = csdl.copyvar(x_max)
 
     x_max = csdl.minimum(x_max, axes=(0,), rho=rho)
 
@@ -178,7 +179,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         )
         tau = tau.set(csdl.slice[:, i], tau_i)
 
-    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins, x, x_max, x_min
+    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins, x, x_max, x_min, x_max_stack, a, b,
 
 def calc_x_max_joint(qdot, vel_lim, rho=200): 
     n_joints, n = qdot.shape
@@ -271,14 +272,14 @@ if __name__ == "__main__":
     q_ref = csdl.Variable(value=q_ref.T)
     s_ref = csdl.Variable(value=s_ref)
     spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
-    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 20)
+    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 200)
 
 
-    grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=550)
+    grav = csdl.Variable(value=np.array([0, 0, -9.81]))*0
+    torque_lim = csdl.Variable(shape=(3,), value=100)
     vel_lim = csdl.Variable(shape=(3,), value=2.2)
 
-    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min = toppra(
+    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min, x_max_stack, a, b,  = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
         robot.link_to_link_frames, robot.screw_axes, robot.inertias, grav)
     
@@ -317,7 +318,7 @@ if __name__ == "__main__":
                 sddot_maxes,
                 sddot_mins,
                 torque_lim,
-                vel_lim, x, x_max, x_min
+                vel_lim, x, x_max, x_min, x_max_stack, a, b
             ]
         )
         import time
@@ -376,11 +377,11 @@ if __name__ == "__main__":
 
         for i in range(3):
             if i == 2:
-                cheat = 0.04
+                cheat = 2.2/2.24
             else:
-                cheat = 0.0
-            axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :], label='vel')
-            axs[0][i].axhline(jax_sim[vel_lim][i] + cheat, linestyle='--', color='k', label='max_vel')
+                cheat = 1
+            axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :]*cheat, label='vel')
+            axs[0][i].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
             axs[0][i].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
             [axs[0][i].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[0][i].set(
@@ -447,8 +448,56 @@ if __name__ == "__main__":
         )
         ax.grid()
 
+        # Plot Path vel info
+        fig, ax = plt.subplots()
+        ax.plot(jax_sim[s], jax_sim[x], label='Actual x')
+        ax.plot(jax_sim[s], jax_sim[x_max_stack][0], 'k--', label=r'$\bar{x}^{dyn}$')
+        ax.plot(jax_sim[s], jax_sim[x_max_stack][1], 'r--', label=r'$-\bar{x}^{vel}$')
+        [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for s_loc in jax_sim[s_ref]]
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
+        ax.set(
+            xlabel='s',
+            ylabel=r'$\dot{s}^2$',
+            title='Feasible path squared velocities'
+        )
+        ax.grid()
+
+        # Plot Path vel info
+        fig, ax = plt.subplots()
+        ax.plot(jax_sim[s], jax_sim[a].T, label='a')
+        # ax.plot(jax_sim[s], jax_sim[x_max_stack][0], 'k--', label=r'$\bar{x}^{dyn}$')
+        # ax.plot(jax_sim[s], jax_sim[x_max_stack][1], 'r--', label=r'$-\bar{x}^{vel}$')
+        # [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for s_loc in jax_sim[s_ref]]
+        # handles, labels = ax.get_legend_handles_labels()
+        # by_label = dict(zip(labels, handles))
+        # ax.legend(by_label.values(), by_label.keys())
+        ax.set(
+            xlabel='s',
+            ylabel=r'a',
+            # title='Feasible path squared velocities'
+        )
+        ax.grid()
+
+        # Plot Path vel info
+        fig, ax = plt.subplots()
+        ax.plot(jax_sim[s], jax_sim[b].T, label='b')
+        # ax.plot(jax_sim[s], jax_sim[x_max_stack][0], 'k--', label=r'$\bar{x}^{dyn}$')
+        # ax.plot(jax_sim[s], jax_sim[x_max_stack][1], 'r--', label=r'$-\bar{x}^{vel}$')
+        # [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for s_loc in jax_sim[s_ref]]
+        # handles, labels = ax.get_legend_handles_labels()
+        # by_label = dict(zip(labels, handles))
+        # ax.legend(by_label.values(), by_label.keys())
+        ax.set(
+            xlabel='s',
+            ylabel=r'b',
+            # title='Feasible path squared velocities'
+        )
+        ax.grid()
 
 
+        
 
         # plot joint torque and velocity vs. time
         fig, axs = plt.subplots(2, 2, figsize=(4, 6), gridspec_kw={'width_ratios': [1, 0.1]}, layout="constrained")
@@ -456,12 +505,13 @@ if __name__ == "__main__":
         idx = np.where(mask)[0]
 
         for i in range(3):
-            axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :], label=f'J{i}')
             if i == 2:
-                cheat = 0.24
+                cheat = 2.2/2.24
             else:
-                cheat = 0.0
-            axs[0][0].axhline(jax_sim[vel_lim][i] + cheat, linestyle='--', color='k', label='max_vel')
+                cheat = 1
+            axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :]*cheat, label=f'J{i}')
+            
+            axs[0][0].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
             axs[0][0].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
             [axs[0][0].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[0][0].set(
