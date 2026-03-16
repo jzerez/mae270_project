@@ -275,7 +275,7 @@ if __name__ == "__main__":
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=75)
+    torque_lim = csdl.Variable(shape=(3,), value=500)
     vel_lim = csdl.Variable(shape=(3,), value=2.0)
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min = toppra(
