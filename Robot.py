@@ -80,6 +80,7 @@ class Robot():
             a_masses_temp = a_masses_temp.set(csdl.slice[i], self.a_masses[i+1])
 
         self.link_masses, coms, self.inertias = mass_inertia.build_Glist(self.link_lens, l_id, l_t, rho, a_masses_temp)
+        # self.inertias = self.inertias.set(csdl.slice[-1], csdl.Variable(value=np.identity(6)*5))
         self.link_to_joint_frames, self.link_to_link_frames = self.calc_link_frames(coms)
         # pass
 

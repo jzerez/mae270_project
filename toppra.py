@@ -115,6 +115,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     x = csdl.Variable(shape=(x_max.shape), value=0)
     sddot_mins = csdl.Variable(shape=(n,), value=0)
     sddot_maxs = csdl.Variable(shape=(n,), value=0)
+    x_min = csdl.Variable(shape=(n,), value=0)
     for i in csdl.frange(n-1):
         xi = x[i]
         sddot_max, sddot_min = calc_accel_bounds(xi, a[:, i], b[:, i], c[:, i], 
@@ -125,6 +126,8 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         x_next_min = xi + 2 * ds * sddot_min
         x_next_max = xi + 2 * ds * sddot_max
 
+        x_min = x_min.set(csdl.slice[i], x_next_min)
+
         # Find the limiting path velocity between dynamics and path feasibility
         x_next1 = csdl.Variable(shape=(2,), value=0)
         x_next1 = x_next1.set(csdl.slice[0], x_max[i+1])
@@ -132,7 +135,7 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
         x_next1 = csdl.minimum(x_next1, rho=rho)
         
         # Extra check, make sure we're greater than the minimum path vel for path feasibility
-        x_next2 = csdl.Variable(shape=(2,), value=0)
+        x_next2 = csdl.Variable(shape=(3,), value=0)
         x_next2 = x_next2.set(csdl.slice[0], x_next1)
         x_next2 = x_next2.set(csdl.slice[1], x_next_min)
 
@@ -146,23 +149,36 @@ def toppra(s, q, qdot, qddot, torque_lim, vel_lim,
     sdots = csdl.Variable(shape=(n,), value=0)
     sddots = csdl.Variable(shape=(n,), value=0)
 
-    for i in csdl.frange(n-1):
-        sdot = csdl.sqrt(x[i])
-        sddot = (x[i+1] - x[i]) / (2*ds)
+    for i in csdl.frange(n - 1):
+        x_i_pair = csdl.Variable(shape=(2,), value=0.0)
+        x_i_pair = x_i_pair.set(csdl.slice[0], x[i])
+        x_i_pair = x_i_pair.set(csdl.slice[1], 0.0)
+        x_i_nonneg = csdl.maximum(x_i_pair, rho=rho)
 
-        sdots = sdots.set(csdl.slice[i], sdot)    
-        sddots = sddots.set(csdl.slice[i], sddot)  
+        x_ip1_pair = csdl.Variable(shape=(2,), value=0.0)
+        x_ip1_pair = x_ip1_pair.set(csdl.slice[0], x[i + 1])
+        x_ip1_pair = x_ip1_pair.set(csdl.slice[1], 0.0)
+        x_ip1_nonneg = csdl.maximum(x_ip1_pair, rho=rho)
 
-        dt = 2*ds / (sdot + csdl.sqrt(x[i+1]) + eps)
-        t = t.set(csdl.slice[i+1], t[i] + dt)
-        
+        sdot = csdl.sqrt(x_i_nonneg + eps)
+        sddot = (x_ip1_nonneg - x_i_nonneg) / (2 * ds)
+
+        sdots = sdots.set(csdl.slice[i], sdot)
+        sddots = sddots.set(csdl.slice[i], sddot)
+
+        dt = 2 * ds / (sdot + csdl.sqrt(x_ip1_nonneg + eps) + eps)
+        t = t.set(csdl.slice[i + 1], t[i] + dt)
+
         qt = qt.set(csdl.slice[:, i], qdot[:, i] * sdot)
-        qtt = qtt.set(csdl.slice[:, i], qdot[:, i] * sddot + qddot[:, i] * x[i])
-        
-        tau_i = dynamics.inverse_dynamics(q[:, i], qt[:, i], qtt[:, i], link_frames, screw_axes, inertias, grav)
+        qtt = qtt.set(csdl.slice[:, i], qdot[:, i] * sddot + qddot[:, i] * x_i_nonneg)
+
+        tau_i = dynamics.inverse_dynamics(
+            q[:, i], qt[:, i], qtt[:, i],
+            link_frames, screw_axes, inertias, grav
+        )
         tau = tau.set(csdl.slice[:, i], tau_i)
 
-    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins
+    return t, qt, qtt, tau, s, sdot, sddots, sddot_maxs, sddot_mins, x, x_max, x_min
 
 def calc_x_max_joint(qdot, vel_lim, rho=200): 
     n_joints, n = qdot.shape
@@ -181,22 +197,30 @@ def calc_accel_bounds(x, a, b, c, torque_lim, rho=200, eps=1e-10, acc_lim=2.5e3)
     # is close to zero (where our sigmoid is not very accurate), acceleration
     # along s requires very little torque, which means that it is unlikely that 
     # that particular joint is driving the overall acceleration limit. 
-    upper = (torque_lim - b * x - c) / utils.smooth_abs(a + eps, k=10)
+    u1 = (torque_lim - b * x - c) / (a + eps)
+    u2 = (-torque_lim - b * x - c) / (a + eps)
 
-    amax = csdl.minimum(upper, rho=rho)
-    amin = csdl.maximum(-upper, rho=rho)
+    pair = csdl.Variable(shape=(2, a.shape[0]), value=0.0)
+    pair = pair.set(csdl.slice[0, :], u1)
+    pair = pair.set(csdl.slice[1, :], u2)
 
-    clamped_amax = csdl.Variable(shape=(2,), value=0)
-    clamped_amin = csdl.Variable(shape=(2,), value=0)
+    lower_joint = csdl.minimum(pair, axes=(0,), rho=rho)
+    upper_joint = csdl.maximum(pair, axes=(0,), rho=rho)
 
-    clamped_amax = clamped_amax.set(csdl.slice[0], amax)
-    clamped_amax = clamped_amax.set(csdl.slice[1], acc_lim)
+    sddot_min = csdl.maximum(lower_joint, rho=rho)
+    sddot_max = csdl.minimum(upper_joint, rho=rho)
 
-    clamped_amin = clamped_amin.set(csdl.slice[0], amin)
-    clamped_amin = clamped_amin.set(csdl.slice[1], -acc_lim)
+    max_pair = csdl.Variable(shape=(2,), value=0.0)
+    max_pair = max_pair.set(csdl.slice[0], sddot_max)
+    max_pair = max_pair.set(csdl.slice[1], acc_lim)
+    sddot_max = csdl.minimum(max_pair, rho=rho)
 
-    return csdl.minimum(clamped_amax, rho=rho), csdl.maximum(clamped_amin, rho=rho)
+    min_pair = csdl.Variable(shape=(2,), value=0.0)
+    min_pair = min_pair.set(csdl.slice[0], sddot_min)
+    min_pair = min_pair.set(csdl.slice[1], -acc_lim)
+    sddot_min = csdl.maximum(min_pair, rho=rho)
 
+    return sddot_max, sddot_min
 
 if __name__ == "__main__":
     import numpy as np
@@ -243,7 +267,7 @@ if __name__ == "__main__":
                  a_power, a_gear, 
                  l_id, l_t)
     
-
+    # robot.inertias = robot.inertias.set(csdl.slice[-1, :, :], csdl.Variable(value=np.identity(6)*5))
     q_ref = csdl.Variable(value=q_ref.T)
     s_ref = csdl.Variable(value=s_ref)
     spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
@@ -251,10 +275,10 @@ if __name__ == "__main__":
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=1000)
+    torque_lim = csdl.Variable(shape=(3,), value=100)
     vel_lim = csdl.Variable(shape=(3,), value=1.2)
 
-    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins = toppra(
+    t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
         robot.link_to_link_frames, robot.screw_axes, robot.inertias, grav)
     
@@ -293,7 +317,7 @@ if __name__ == "__main__":
                 sddot_maxes,
                 sddot_mins,
                 torque_lim,
-                vel_lim,
+                vel_lim, x, x_max, x_min
             ]
         )
         import time
@@ -401,5 +425,65 @@ if __name__ == "__main__":
             title='Feasible path accels'
         )
         ax.grid()
-        plt.show(block=True)
+        
 
+        # Plot Path vel info
+        fig, ax = plt.subplots()
+        ax.plot(jax_sim[s], jax_sim[x], label='Actual x')
+        ax.plot(jax_sim[s], jax_sim[x_max], 'k--', label=r'$\bar{x}$')
+        ax.plot(jax_sim[s], jax_sim[x_min], 'r--', label=r'$-\bar{x}$')
+        [ax.axvline(s_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for s_loc in jax_sim[s_ref]]
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
+        ax.set(
+            xlabel='s',
+            ylabel=r'$\dot{s}^2$',
+            title='Feasible path squared velocities'
+        )
+        ax.grid()
+
+
+
+
+        # plot joint torque and velocity vs. time
+        fig, axs = plt.subplots(2, 2, figsize=(4, 6), gridspec_kw={'width_ratios': [1, 0.1]}, layout="constrained")
+        mask = np.isin(jax_sim[s], jax_sim[s_ref])
+        idx = np.where(mask)[0]
+
+        for i in range(3):
+            axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :], label=f'J{i}')
+            axs[0][0].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
+            axs[0][0].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
+            [axs[0][0].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
+            axs[0][0].set(
+                title=f'Joint Velocity Profiles',
+                xlabel='time [s]',
+                ylabel='vel [rad/s]',
+            )
+            axs[0][0].grid()
+           
+
+            axs[1][0].plot(jax_sim[t], jax_sim[tau][i, :], label=f'J{i}')
+            axs[1][0].axhline(jax_sim[torque_lim][i], linestyle='--', color='k', label='max_torque')
+            axs[1][0].axhline(-jax_sim[torque_lim][i], linestyle='--', color='r', label='min_torque')
+            [axs[1][0].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
+            axs[1][0].set(
+                title='Joint Torque Profiles',
+                xlabel='time [s]',
+                ylabel='Torque [Nm]',
+            )
+            axs[1][0].grid()
+        for i in range(2):
+            legend_ax = axs[i, 1]
+            legend_ax.axis('off') # Hide the axis lines/ticks
+            
+            # Get handles from one of the plots in the row
+            handles, labels = axs[i, 0].get_legend_handles_labels()
+
+            by_label = dict(zip(labels, handles))
+            
+            # Place the legend in the dedicated empty axis
+            legend_ax.legend(by_label.values(), by_label.keys(), loc='center left', frameon=False)    
+        fig.set_constrained_layout_pads(w_pad=0.1, h_pad=0.1)
+        plt.show(block=True)
