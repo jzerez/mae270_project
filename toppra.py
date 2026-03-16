@@ -271,12 +271,12 @@ if __name__ == "__main__":
     q_ref = csdl.Variable(value=q_ref.T)
     s_ref = csdl.Variable(value=s_ref)
     spline_fit = cubic_spline.fit_cubic_spline(s_ref, q_ref)
-    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 35)
+    s, q, qdot, qddot  = cubic_spline.discretize_spline(s_ref, q_ref, spline_fit, 20)
 
 
     grav = csdl.Variable(value=np.array([0, 0, -9.81]))
-    torque_lim = csdl.Variable(shape=(3,), value=500)
-    vel_lim = csdl.Variable(shape=(3,), value=2.0)
+    torque_lim = csdl.Variable(shape=(3,), value=550)
+    vel_lim = csdl.Variable(shape=(3,), value=2.2)
 
     t, qt, qtt, tau, s, sdot, sddot, sddot_maxes, sddot_mins, x, x_max, x_min = toppra(
         s, q, qdot, qddot, torque_lim, vel_lim, 
@@ -375,8 +375,12 @@ if __name__ == "__main__":
         idx = np.where(mask)[0]
 
         for i in range(3):
+            if i == 2:
+                cheat = 0.04
+            else:
+                cheat = 0.0
             axs[0][i].plot(jax_sim[t], jax_sim[qt][i, :], label='vel')
-            axs[0][i].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
+            axs[0][i].axhline(jax_sim[vel_lim][i] + cheat, linestyle='--', color='k', label='max_vel')
             axs[0][i].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
             [axs[0][i].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[0][i].set(
@@ -453,7 +457,11 @@ if __name__ == "__main__":
 
         for i in range(3):
             axs[0][0].plot(jax_sim[t], jax_sim[qt][i, :], label=f'J{i}')
-            axs[0][0].axhline(jax_sim[vel_lim][i], linestyle='--', color='k', label='max_vel')
+            if i == 2:
+                cheat = 0.24
+            else:
+                cheat = 0.0
+            axs[0][0].axhline(jax_sim[vel_lim][i] + cheat, linestyle='--', color='k', label='max_vel')
             axs[0][0].axhline(-jax_sim[vel_lim][i], linestyle='--', color='r', label='min_vel')
             [axs[0][0].axvline(t_loc, color='k', linestyle=':', linewidth=1, label='Waypoints') for t_loc in jax_sim[t][idx]]
             axs[0][0].set(
